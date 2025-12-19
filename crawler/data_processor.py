@@ -1,0 +1,273 @@
+import re
+import json
+import pandas as pd
+
+class DataProcessor:
+    @staticmethod
+    def clean_team_name(text):
+        """팀 이름 정제"""
+        text = re.sub(r'<[^>]+>', '', text)
+        text = re.sub(r'\[[^\]]*\]', '', text)
+        text = re.sub(r'^\d+\s*', '', text)
+        text = re.sub(r'\s*\d+$', '', text)
+        return text.strip()
+
+    @staticmethod
+    def parse_team_rank(text):
+        """팀 이름과 순위 분리"""
+        text = re.sub(r'<[^>]+>', '', text)
+        bracket_match = re.search(r'\[([^\]]+)\]', text)
+        rank = "-"
+        
+        if bracket_match:
+            bracket_content = bracket_match.group(1).strip()
+            if bracket_content.isdigit():
+                rank = bracket_content
+        
+        cleaned_text = re.sub(r'\[[^\]]*\]', '', text)
+        cleaned_text = re.sub(r'^\d+\s*', '', cleaned_text)
+        cleaned_text = re.sub(r'\s*\d+$', '', cleaned_text)
+        return cleaned_text.strip(), rank
+
+    @staticmethod
+    def safe_get_value(val):
+        """값 안전하게 추출"""
+        try:
+            if isinstance(val, pd.Series):
+                val = val.iloc[0] if not val.empty else None
+            if val is None:
+                return None
+            if isinstance(val, float) and (val != val):  # NaN check
+                return None
+            return val
+        except (ValueError, TypeError, AttributeError):
+            return None
+
+    @staticmethod
+    def safe_excel_value(val):
+        """엑셀 저장용 값 변환"""
+        if val is None: return ""
+        try:
+            if isinstance(val, float) and (val != val): return ""
+        except: pass
+        if val == "": return ""
+        if isinstance(val, (int, float)): return str(val)
+        try:
+            return ''.join(char for char in str(val).strip() if ord(char) >= 32 or char in '\n\r\t')
+        except: return ""
+
+    @classmethod
+    def save_results(cls, df, title, ordered_companies, log_callback=None):
+        if df.empty:
+            if log_callback: log_callback("데이터가 없습니다.")
+            return None
+
+        safe_title = re.sub(r'[\\/*?:"<>|]', "", title).strip()
+        filename = f"{safe_title}.xlsx"
+        json_filename = f"{safe_title}.json"
+
+        if log_callback: log_callback("\n[데이터 변환 및 저장 중...]")
+
+        # 1. 데이터 프레임 전처리 (피벗)
+        index_cols = ["Round", "날짜", "시간", "홈", "홈순위", "스코어", "원정", "원정순위"]
+        df_unique = df.drop_duplicates(subset=index_cols + ["Company"])
+        pivot_df = df_unique.pivot(index=index_cols, columns="Company", values=["승", "무", "패"])
+        pivot_df = pivot_df.swaplevel(0, 1, axis=1)
+        
+        # 컬럼 정렬
+        sorted_cols = []
+        for comp in ordered_companies:
+            for type_ in ["승", "무", "패"]:
+                if (comp, type_) in pivot_df.columns:
+                    sorted_cols.append((comp, type_))
+        pivot_df = pivot_df.reindex(columns=sorted_cols)
+        pivot_df.reset_index(inplace=True)
+
+        # 행 정렬
+        pivot_df['_라운드_정렬'] = pd.to_numeric(pivot_df['Round'], errors='coerce')
+        pivot_df['_날짜_정렬'] = pivot_df['날짜'].apply(
+            lambda x: pd.to_datetime(x, format='%m.%d', errors='coerce') if pd.notna(x) else pd.NaT
+        )
+        pivot_df = pivot_df.sort_values(by=['_라운드_정렬', '_날짜_정렬', '시간'], na_position='last')
+        pivot_df.drop(columns=['_라운드_정렬', '_날짜_정렬'], inplace=True)
+        pivot_df.reset_index(drop=True, inplace=True)
+        pivot_df.index.name = "순서"
+
+        if log_callback: log_callback(f"[결과] 총 {len(pivot_df)}개의 경기 데이터 처리")
+
+        # 2. JSON 생성 및 저장
+        json_data = cls._create_json_data(pivot_df, index_cols)
+        with open(json_filename, 'w', encoding='utf-8') as f:
+            json.dump(json_data, f, ensure_ascii=False, indent=2)
+        if log_callback: log_callback(f"JSON 저장 완료: {json_filename}")
+
+        # 3. Excel 생성
+        # 실제 데이터에 존재하는 회사 목록 업데이트
+        companies_in_data = set()
+        for match in json_data:
+            for comp in match.get("배당", {}).keys():
+                companies_in_data.add(comp)
+        
+        final_companies = [c for c in ordered_companies if c in companies_in_data]
+        for c in companies_in_data:
+            if c not in final_companies:
+                final_companies.append(c)
+
+        cls._create_excel(json_data, filename, final_companies)
+        if log_callback: log_callback(f"엑셀 저장 완료: {filename}")
+
+        return filename
+
+    @classmethod
+    def _create_json_data(cls, df, match_info_cols):
+        json_data = []
+        for _, row in df.iterrows():
+            match_data = {}
+            
+            # 기본 정보
+            if "Round" in df.columns: match_data["Round"] = cls.safe_get_value(row["Round"])
+            
+            date_val = cls.safe_get_value(row["날짜"]) if "날짜" in df.columns else None
+            time_val = cls.safe_get_value(row["시간"]) if "시간" in df.columns else None
+            if date_val or time_val:
+                match_data["경기일시"] = {"날짜": date_val, "시간": time_val}
+
+            # 팀 정보
+            for side in ["홈", "원정"]:
+                team = cls.safe_get_value(row[side]) if side in df.columns else None
+                rank = cls.safe_get_value(row[f"{side}순위"]) if f"{side}순위" in df.columns else None
+                if team or rank:
+                    match_data[side] = {"팀": team, "순위": rank}
+
+            # 스코어
+            score = cls.safe_get_value(row["스코어"]) if "스코어" in df.columns else "-"
+            score = str(score).strip() if score else "-"
+            if ":" in score:
+                p = score.split(":")
+                match_data["스코어"] = f"{p[0].strip()}-{p[1].strip()}"
+            elif "-" not in score and score != "-":
+                 match_data["스코어"] = score
+            else:
+                 match_data["스코어"] = score
+
+            # 배당 정보
+            odds_data = {}
+            for col in df.columns:
+                if isinstance(col, tuple) and len(col) == 2:
+                    comp, type_ = col
+                    if comp not in match_info_cols and type_ in ["승", "무", "패"]:
+                        if comp not in odds_data: odds_data[comp] = {}
+                        odds_data[comp][type_] = cls.safe_get_value(row[col])
+            
+            if odds_data: match_data["배당"] = odds_data
+            
+            # 유효성 검사 (팀 정보 없음 제외)
+            if not match_data.get("홈", {}).get("팀") and not match_data.get("원정", {}).get("팀"):
+                continue
+                
+            json_data.append(match_data)
+        return json_data
+
+    @classmethod
+    def _create_excel(cls, json_data, filename, companies):
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Alignment, Font
+            
+            wb = Workbook()
+            ws = wb.active
+            
+            # 스타일
+            align_center = Alignment(horizontal='center', vertical='center')
+            font_bold = Font(bold=True)
+            
+            # 헤더 구성
+            row1, row2 = [], []
+            
+            # 고정 헤더
+            headers = [("Round", 1), ("경기일시", 2, ["날짜", "시간"]), 
+                       ("홈", 2, ["팀", "순위"]), ("스코어", 1), ("원정", 2, ["팀", "순위"])]
+            
+            for h in headers:
+                if len(h) == 2: # 단일 컬럼
+                    row1.append(h[0])
+                    row2.append("")
+                else: # 그룹 컬럼
+                    row1.append(h[0])
+                    row1.extend([""] * (h[1]-1))
+                    row2.extend(h[2])
+
+            # 배당 회사 헤더
+            for comp in companies:
+                row1.append(comp)
+                row1.extend(["", ""])
+                row2.extend(["승", "무", "패"])
+
+            ws.append(row1)
+            ws.append(row2)
+
+            # 헤더 스타일 및 병합
+            for row in ws.iter_rows(min_row=1, max_row=2):
+                for cell in row:
+                    cell.alignment = align_center
+                    cell.font = font_bold
+            
+            # 병합 로직
+            curr_col = 1
+            # Round
+            ws.merge_cells(start_row=1, start_column=curr_col, end_row=2, end_column=curr_col)
+            curr_col += 1
+            # 경기일시
+            ws.merge_cells(start_row=1, start_column=curr_col, end_row=1, end_column=curr_col+1)
+            curr_col += 2
+            # 홈
+            ws.merge_cells(start_row=1, start_column=curr_col, end_row=1, end_column=curr_col+1)
+            curr_col += 2
+            # 스코어
+            ws.merge_cells(start_row=1, start_column=curr_col, end_row=2, end_column=curr_col)
+            curr_col += 1
+            # 원정
+            ws.merge_cells(start_row=1, start_column=curr_col, end_row=1, end_column=curr_col+1)
+            curr_col += 2
+            
+            # 배당 회사들
+            for _ in companies:
+                ws.merge_cells(start_row=1, start_column=curr_col, end_row=1, end_column=curr_col+2)
+                curr_col += 3
+            
+            # 데이터 채우기
+            for match in json_data:
+                row = []
+                row.append(cls.safe_excel_value(match.get("Round")))
+                
+                dt = match.get("경기일시", {})
+                row.extend([cls.safe_excel_value(dt.get("날짜")), cls.safe_excel_value(dt.get("시간"))])
+                
+                home = match.get("홈", {})
+                row.extend([cls.safe_excel_value(home.get("팀")), cls.safe_excel_value(home.get("순위"))])
+                
+                row.append(cls.safe_excel_value(match.get("스코어")))
+                
+                away = match.get("원정", {})
+                row.extend([cls.safe_excel_value(away.get("팀")), cls.safe_excel_value(away.get("순위"))])
+                
+                odds = match.get("배당", {})
+                for comp in companies:
+                    c_odds = odds.get(comp, {})
+                    row.extend([
+                        cls.safe_excel_value(c_odds.get("승")),
+                        cls.safe_excel_value(c_odds.get("무")),
+                        cls.safe_excel_value(c_odds.get("패"))
+                    ])
+                ws.append(row)
+
+            # 전체 데이터 정렬
+            for row in ws.iter_rows(min_row=3, max_row=ws.max_row):
+                for cell in row:
+                    cell.alignment = align_center
+
+            wb.save(filename)
+            
+        except Exception as e:
+            raise Exception(f"Excel 생성 실패: {str(e)}")
+
