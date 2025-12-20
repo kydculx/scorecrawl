@@ -1,6 +1,7 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QLineEdit, QPushButton, QTextEdit, QMessageBox, QComboBox)
-from gui.workers import CrawlThread
+from ..workers import CrawlThread
+from utils.constants import LEAGUE_PATHS
 
 class LeagueCrawlWidget(QWidget):
     """리그 정보를 크롤링하는 화면 위젯"""
@@ -57,27 +58,6 @@ class LeagueCrawlWidget(QWidget):
         self.log_view.setReadOnly(True)
         layout.addWidget(self.log_view)
         
-        self.init_data()
-
-    def init_data(self):
-        self.league_paths = [
-            ("리그 선택", ""),
-            ("K리그 1", "/subleague/15"),
-            ("K리그 2", "/subleague/1292"),
-            ("호주 A-리그", "/subleague/273"),
-            ("프리미어리그", "/league/36"),
-            ("세리에 A", "/league/34"),
-            ("라리가", "/league/31"),
-            ("분데스리가", "/league/8"),
-            ("리그 1", "/league/11"),
-            ("챔피언스리그", "/cupmatch/103"),
-            ("유로파리그", "/cupmatch/113"),
-            ("유로파 컨퍼런스리그", "/cupmatch/2187"),
-            ("일본 J1리그", "/subleague/25"),
-            ("메이저 리그 사커", "/subleague/21"),
-            ("CONCACAF챔피언스컵", "/cupmatch/344"),
-            ("AFC 아시안컵", "/cupmatch/95"),
-        ]
         self.update_league_list()
 
     def update_league_list(self):
@@ -85,7 +65,10 @@ class LeagueCrawlWidget(QWidget):
         self.league_combo.clear()
         domain = self.domain_combo.currentText()
         
-        for name, path in self.league_paths:
+        for item in LEAGUE_PATHS:
+            name = item[0]
+            path = item[1] if len(item) > 1 else ""
+            
             url = f"https://football.{domain}{path}" if path else ""
             self.league_combo.addItem(name, url)
             

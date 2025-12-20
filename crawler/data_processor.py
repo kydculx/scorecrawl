@@ -1,6 +1,9 @@
 import re
 import json
 import pandas as pd
+import os
+from utils.constants import STATS_COLUMNS, PLAYER_STATS_HEADER
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 
 class DataProcessor:
     @staticmethod
@@ -117,6 +120,212 @@ class DataProcessor:
         if log_callback: log_callback(f"엑셀 저장 완료: {filename}")
 
         return filename
+
+    @classmethod
+    def save_team_results(cls, result_data, team_name, log_callback=None):
+        """팀 데이터 저장 (엑셀 단일 시트)"""
+        if not result_data or (not isinstance(result_data, dict) and result_data.empty):
+            if log_callback: log_callback("저장할 팀 데이터가 없습니다.")
+            return None
+            
+        safe_name = re.sub(r'[\\/*?:"<>|]', "", team_name).strip()
+        filename = f"{safe_name}_팀정보.xlsx"
+        
+        try:
+            with pd.ExcelWriter(filename, engine='openpyxl') as writer:
+                # 1. 통계 데이터 저장 (정의된 순서대로 하나의 시트에)
+                stats_data = result_data.get("stats", {})
+                
+                # 스타일 정의
+                header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid") # 남색 배경
+                header_font = Font(color="FFFFFF", bold=True) # 흰색 글씨
+                center_align = Alignment(horizontal='center', vertical='center')
+                thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), 
+                                   top=Side(style='thin'), bottom=Side(style='thin'))
+
+                sheet_name = "팀정보"
+                start_row = 1
+                
+                # 빈 시트 생성 (데이터가 하나라도 있을 때)
+                if stats_data:
+                    writer.book.create_sheet(sheet_name)
+                    ws = writer.book[sheet_name]
+                    # 기본 시트 제거 (Sheet)
+                    if 'Sheet' in writer.book.sheetnames:
+                        del writer.book['Sheet']
+
+                    for key, columns in STATS_COLUMNS.items():
+                        if key in stats_data:
+                            df = stats_data[key]
+                            
+                            # 제목 추가
+                            ws.cell(row=start_row, column=1, value=key).font = Font(bold=True, size=12)
+                            start_row += 1
+
+                            # 데이터 프레임 쓰기
+                            # to_excel은 startrow 인자를 받지만 openpyxl writer 객체에서는 직접 제어하는게 나음
+                            # 하지만 pandas의 to_excel 기능을 활용하기 위해 writer를 사용하되, 
+                            # 기존 시트에 덮어쓰지 않고 위치를 지정해야 함.
+                            
+                            # pandas to_excel 사용 시 startrow 옵션 활용
+                            df.to_excel(writer, sheet_name=sheet_name, startrow=start_row-1, index=False)
+                            
+                            # 스타일 적용 (방금 추가한 영역에 대해)
+                            # 헤더 (start_row)
+                            for col_idx, col_name in enumerate(df.columns, 1):
+                                cell = ws.cell(row=start_row, column=col_idx)
+                                cell.fill = header_fill
+                                cell.font = header_font
+                                cell.alignment = center_align
+                                cell.border = thin_border
+                                
+                            # 데이터
+                            for r_idx in range(len(df)):
+                                current_row = start_row + 1 + r_idx
+                                for c_idx in range(len(df.columns)):
+                                    cell = ws.cell(row=current_row, column=c_idx+1)
+                                    cell.alignment = center_align
+                                    cell.border = thin_border
+                            
+                            # 다음 테이블을 위한 공백
+                            start_row += len(df) + 3 # 데이터 행 수 + 헤더 + 빈 줄 2개
+
+                    # 2. 선수 정보 저장 (players 키가 있는 경우)
+                    players = result_data.get("players")
+                    if players:
+                        # 선수 리스트를 DataFrame으로 변환
+                        # summary_stats만 추출
+                        player_rows = []
+                        for p in players:
+                            if "summary_stats" in p:
+                                player_rows.append(p["summary_stats"])
+                        
+                        if player_rows:
+                            df_players = pd.DataFrame(player_rows)
+                            # 컬럼 정렬 (PLAYER_STATS_HEADER 기준)
+                            cols = [c for c in PLAYER_STATS_HEADER if c in df_players.columns]
+                            if cols:
+                                df_players = df_players[cols]
+                            
+                            # 제목 추가
+                            ws.cell(row=start_row, column=1, value="선수 목록").font = Font(bold=True, size=12)
+                            start_row += 1
+
+                            # 데이터 프레임 쓰기
+                            df_players.to_excel(writer, sheet_name=sheet_name, startrow=start_row-1, index=False)
+                            
+                            # 스타일 적용
+                            # 헤더
+                            for col_idx, col_name in enumerate(df_players.columns, 1):
+                                cell = ws.cell(row=start_row, column=col_idx)
+                                cell.fill = header_fill
+                                cell.font = header_font
+                                cell.alignment = center_align
+                                cell.border = thin_border
+                                
+                            # 데이터
+                            for r_idx in range(len(df_players)):
+                                current_row = start_row + 1 + r_idx
+                                for c_idx in range(len(df_players.columns)):
+                                    cell = ws.cell(row=current_row, column=c_idx+1)
+                                    cell.alignment = center_align
+                                    cell.border = thin_border
+                            
+                            start_row += len(df_players) + 3
+
+                    # 컬럼 너비 자동 조정 (전체 시트 처리)
+                    for col in ws.columns:
+                        max_length = 0
+                        column = col[0].column_letter
+                        for cell in col:
+                            try:
+                                if len(str(cell.value)) > max_length:
+                                    max_length = len(str(cell.value))
+                            except:
+                                pass
+                        adjusted_width = (max_length + 2)
+                        ws.column_dimensions[column].width = adjusted_width
+
+            if log_callback: log_callback(f"엑셀 저장 완료: {filename}")
+            return filename
+        except Exception as e:
+            if log_callback: log_callback(f"엑셀 저장 실패: {e}")
+            return None
+
+    @classmethod
+    def save_player_results(cls, result_data, player_name, log_callback=None):
+        """선수 데이터 저장 (엑셀 단일 시트)"""
+        if not result_data or (not isinstance(result_data, dict) and result_data.empty):
+            if log_callback: log_callback("저장할 선수 데이터가 없습니다.")
+            return None
+            
+        safe_name = re.sub(r'[\\/*?:"<>|]', "", player_name).strip()
+        filename = f"{safe_name}_선수정보.xlsx"
+        
+        try:
+            with pd.ExcelWriter(filename, engine='openpyxl') as writer:
+                stats_data = result_data.get("stats", {})
+                
+                # 스타일 정의
+                header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+                header_font = Font(color="FFFFFF", bold=True)
+                center_align = Alignment(horizontal='center', vertical='center')
+                thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), 
+                                   top=Side(style='thin'), bottom=Side(style='thin'))
+
+                sheet_name = "선수정보"
+                start_row = 1
+                
+                if stats_data:
+                    writer.book.create_sheet(sheet_name)
+                    ws = writer.book[sheet_name]
+                    if 'Sheet' in writer.book.sheetnames:
+                        del writer.book['Sheet']
+
+                    for key, df in stats_data.items():
+                        # 제목
+                        ws.cell(row=start_row, column=1, value=key).font = Font(bold=True, size=12)
+                        start_row += 1
+
+                        df.to_excel(writer, sheet_name=sheet_name, startrow=start_row-1, index=False)
+                        
+                        # 스타일 적용
+                        # 헤더
+                        for col_idx, col_name in enumerate(df.columns, 1):
+                            cell = ws.cell(row=start_row, column=col_idx)
+                            cell.fill = header_fill
+                            cell.font = header_font
+                            cell.alignment = center_align
+                            cell.border = thin_border
+                            
+                        # 데이터
+                        for r_idx in range(len(df)):
+                            current_row = start_row + 1 + r_idx
+                            for c_idx in range(len(df.columns)):
+                                cell = ws.cell(row=current_row, column=c_idx+1)
+                                cell.alignment = center_align
+                                cell.border = thin_border
+                        
+                        start_row += len(df) + 3
+
+                    # 컬럼 너비 조정
+                    for col in ws.columns:
+                        max_length = 0
+                        column = col[0].column_letter
+                        for cell in col:
+                            try:
+                                if len(str(cell.value)) > max_length:
+                                    max_length = len(str(cell.value))
+                            except:
+                                pass
+                        adjusted_width = (max_length + 2)
+                        ws.column_dimensions[column].width = adjusted_width
+
+            if log_callback: log_callback(f"엑셀 저장 완료: {filename}")
+            return filename
+        except Exception as e:
+            if log_callback: log_callback(f"엑셀 저장 실패: {e}")
+            return None
 
     @classmethod
     def _create_json_data(cls, df, match_info_cols):
@@ -270,4 +479,3 @@ class DataProcessor:
             
         except Exception as e:
             raise Exception(f"Excel 생성 실패: {str(e)}")
-

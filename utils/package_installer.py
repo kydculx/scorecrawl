@@ -8,7 +8,8 @@ def check_and_install_packages():
         'pandas': 'pandas',
         'PyQt5': 'PyQt5',
         'playwright': 'playwright',
-        'openpyxl': 'openpyxl'
+        'openpyxl': 'openpyxl',
+        'lxml': 'lxml'  # read_html을 위해 필요
     }
     
     missing_packages = []
@@ -53,4 +54,3 @@ def check_and_install_packages():
             subprocess.check_call([sys.executable, '-m', 'playwright', 'install', 'chromium'])
         except:
             pass
-
