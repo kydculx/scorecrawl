@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QLineEdit, QPushButton, QTextEdit, QMessageBox, QComboBox)
 from ..workers import CrawlThread
-from utils.constants import LEAGUE_PATHS
+from utils.constants import LEAGUE_DATA
 
 class LeagueCrawlWidget(QWidget):
     """리그 정보를 크롤링하는 화면 위젯"""
@@ -19,12 +19,17 @@ class LeagueCrawlWidget(QWidget):
         self.domain_combo.currentIndexChanged.connect(self.update_league_list)
         
         self.league_combo = QComboBox()
-        self.league_combo.currentIndexChanged.connect(self.update_url)
+        self.league_combo.currentIndexChanged.connect(self.update_season_list)
+
+        self.season_combo = QComboBox()
+        self.season_combo.currentIndexChanged.connect(self.update_url)
         
         top_layout.addWidget(QLabel("도메인:"))
         top_layout.addWidget(self.domain_combo)
         top_layout.addWidget(QLabel("리그:"))
         top_layout.addWidget(self.league_combo, 1)
+        top_layout.addWidget(QLabel("시즌:"))
+        top_layout.addWidget(self.season_combo)
         layout.addLayout(top_layout)
         
         # URL
@@ -52,7 +57,6 @@ class LeagueCrawlWidget(QWidget):
         btn_layout.addWidget(self.btn_start)
         btn_layout.addWidget(self.btn_stop)
         layout.addLayout(btn_layout)
-        
         # 로그
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
@@ -63,23 +67,44 @@ class LeagueCrawlWidget(QWidget):
     def update_league_list(self):
         self.league_combo.blockSignals(True)
         self.league_combo.clear()
-        domain = self.domain_combo.currentText()
         
-        for item in LEAGUE_PATHS:
-            name = item[0]
-            path = item[1] if len(item) > 1 else ""
-            
-            url = f"https://football.{domain}{path}" if path else ""
-            self.league_combo.addItem(name, url)
+        # LEAGUE_DATA 기반으로 리그 콤보박스 채우기
+        # userData로 해당 리그의 전체 데이터를 저장
+        for league_data in LEAGUE_DATA:
+            name = league_data["name"]
+            self.league_combo.addItem(name, league_data)
             
         self.league_combo.blockSignals(False)
+        self.update_season_list()
+
+    def update_season_list(self):
+        """리그 선택 시 해당 리그의 시즌 목록 업데이트"""
+        self.season_combo.blockSignals(True)
+        self.season_combo.clear()
+        
+        league_data = self.league_combo.currentData()
+        if league_data and "seasons" in league_data:
+            # 시즌 목록 추가
+            # season tuple: (시즌명, 리그URL, 팀목록URL)
+            for season_info in league_data["seasons"]:
+                season_name = season_info[0]
+                league_path = season_info[1]
+                
+                # domain은 메서드 내에서 조합
+                self.season_combo.addItem(season_name, league_path)
+                
+        self.season_combo.blockSignals(False)
         self.update_url()
 
     def update_url(self):
-        url = self.league_combo.currentData()
-        if not url:
-            domain = self.domain_combo.currentText()
+        path = self.season_combo.currentData()
+        domain = self.domain_combo.currentText()
+        
+        if path:
+            url = f"https://football.{domain}{path}"
+        else:
             url = f"https://{domain}"
+            
         self.url_input.setText(url)
 
     def log(self, msg):

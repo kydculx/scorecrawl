@@ -116,6 +116,11 @@ class DataProcessor:
             if c not in final_companies:
                 final_companies.append(c)
 
+        # 평균을 맨 앞으로 이동
+        if "평균" in final_companies:
+            final_companies.remove("평균")
+            final_companies.insert(0, "평균")
+
         cls._create_excel(json_data, filename, final_companies)
         if log_callback: log_callback(f"엑셀 저장 완료: {filename}")
 
@@ -361,12 +366,48 @@ class DataProcessor:
 
             # 배당 정보
             odds_data = {}
+            
+            # 평균 계산을 위한 누적 변수
+            win_sum, win_cnt = 0.0, 0
+            draw_sum, draw_cnt = 0.0, 0
+            loss_sum, loss_cnt = 0.0, 0
+
             for col in df.columns:
                 if isinstance(col, tuple) and len(col) == 2:
                     comp, type_ = col
                     if comp not in match_info_cols and type_ in ["승", "무", "패"]:
+                        val = cls.safe_get_value(row[col])
+                        
+                        # Try to convert to float for averaging
+                        float_val = None
+                        try:
+                            if val is not None and val != "":
+                                float_val = float(val)
+                        except (ValueError, TypeError):
+                            float_val = None
+
+                        if isinstance(float_val, (int, float)):
+                            if type_ == "승":
+                                win_sum += float_val
+                                win_cnt += 1
+                            elif type_ == "무":
+                                draw_sum += float_val
+                                draw_cnt += 1
+                            elif type_ == "패":
+                                loss_sum += float_val
+                                loss_cnt += 1
+
                         if comp not in odds_data: odds_data[comp] = {}
-                        odds_data[comp][type_] = cls.safe_get_value(row[col])
+                        odds_data[comp][type_] = val
+            
+            # 평균 배당 추가
+            if win_cnt > 0 or draw_cnt > 0 or loss_cnt > 0:
+                avg_win = round(win_sum / win_cnt, 2) if win_cnt > 0 else None
+                avg_draw = round(draw_sum / draw_cnt, 2) if draw_cnt > 0 else None
+                avg_loss = round(loss_sum / loss_cnt, 2) if loss_cnt > 0 else None
+                
+                if "평균" not in odds_data: odds_data["평균"] = {}
+                odds_data["평균"] = {"승": avg_win, "무": avg_draw, "패": avg_loss}
             
             if odds_data: match_data["배당"] = odds_data
             

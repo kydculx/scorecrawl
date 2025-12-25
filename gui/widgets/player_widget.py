@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QPushButton, QTextEdit, QComboBox, QMessageBox)
 from PyQt5.QtCore import QThread, pyqtSignal
-from utils.constants import LEAGUE_PATHS, TEAM_PLAYER_URLS
+from utils.constants import LEAGUE_DATA, TEAM_PLAYER_URLS
 from crawler.player_crawler import PlayerCrawler
 from crawler.data_processor import DataProcessor
 from gui.widgets.team_widget import TeamFetcherThread
@@ -74,6 +74,12 @@ class PlayerWidget(QWidget):
         top_layout.addWidget(self.domain_combo)
         top_layout.addWidget(QLabel("리그:"))
         top_layout.addWidget(self.league_combo, 1)
+
+        self.season_combo = QComboBox()
+        self.season_combo.currentIndexChanged.connect(self.on_season_changed)
+        
+        top_layout.addWidget(QLabel("시즌:"))
+        top_layout.addWidget(self.season_combo)
         
         layout.addLayout(top_layout)
         
@@ -114,21 +120,31 @@ class PlayerWidget(QWidget):
         self.crawl_thread = None
 
     def init_league_data(self):
-        self.league_combo.addItem("리그를 선택하세요", "")
-        # LEAGUE_PATHS 구조: (이름, 리그URL, 팀목록URL)
-        for item in LEAGUE_PATHS:
-            name = item[0]
-            # 팀 목록 URL (3번째 요소)
-            team_path = item[2] if len(item) > 2 else ""
-            if team_path: 
-                # data로 팀 목록 URL만 저장
-                self.league_combo.addItem(name, team_path)
+        self.league_combo.addItem("리그를 선택하세요", {})
+        # LEAGUE_DATA 구조: {name, seasons: [(name, league_url, team_url), ...]}
+        for league_data in LEAGUE_DATA:
+            name = league_data["name"]
+            self.league_combo.addItem(name, league_data)
         
     def update_league_urls(self):
-        self.on_league_changed(self.league_combo.currentIndex())
+        self.on_season_changed(self.season_combo.currentIndex())
 
     def on_league_changed(self, index):
-        team_path = self.league_combo.currentData()
+        self.season_combo.blockSignals(True)
+        self.season_combo.clear()
+        
+        league_data = self.league_combo.currentData()
+        if league_data and "seasons" in league_data:
+            for season_info in league_data["seasons"]:
+                season_name = season_info[0]
+                team_list_path = season_info[2]
+                self.season_combo.addItem(season_name, team_list_path)
+                
+        self.season_combo.blockSignals(False)
+        self.on_season_changed(self.season_combo.currentIndex())
+        
+    def on_season_changed(self, index):
+        team_path = self.season_combo.currentData()
         self.team_combo.clear()
         self.player_combo.clear()
         self.btn_start.setEnabled(False)
@@ -137,7 +153,7 @@ class PlayerWidget(QWidget):
             domain = self.domain_combo.currentText()
             url = f"https://football.{domain}{team_path}"
             
-            self.log(f"리그 선택됨: {self.league_combo.currentText()}. 팀 목록을 가져옵니다.")
+            self.log(f"시즌 선택됨: {self.season_combo.currentText()}. 팀 목록을 가져옵니다.")
             self.fetch_teams(url)
         
     def fetch_teams(self, url):

@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QLineEdit, QPushButton, QTextEdit, QComboBox, QMessageBox)
 from PyQt5.QtCore import QThread, pyqtSignal
-from utils.constants import LEAGUE_PATHS
+from utils.constants import LEAGUE_DATA
 from crawler.team_crawler import TeamCrawler
 from crawler.data_processor import DataProcessor
 import re
@@ -72,6 +72,12 @@ class TeamWidget(QWidget):
         top_layout.addWidget(self.domain_combo)
         top_layout.addWidget(QLabel("리그:"))
         top_layout.addWidget(self.league_combo, 1)
+
+        self.season_combo = QComboBox()
+        self.season_combo.currentIndexChanged.connect(self.on_season_changed)
+        
+        top_layout.addWidget(QLabel("시즌:"))
+        top_layout.addWidget(self.season_combo)
         
         layout.addLayout(top_layout)
         
@@ -112,33 +118,44 @@ class TeamWidget(QWidget):
 
     def init_league_data(self):
         # 리그 목록 채우기 (URL은 나중에 도메인에 따라 완성)
-        self.league_combo.addItem("리그를 선택하세요", "")
-        for item in LEAGUE_PATHS:
-            name = item[0]
-            # 팀 목록 URL (3번째 요소)
-            team_path = item[2] if len(item) > 2 else ""
-            
-            if team_path: # "리그 선택" 중복 방지
-                self.league_combo.addItem(name, team_path)
+        self.league_combo.addItem("리그를 선택하세요", {})
+        for league_data in LEAGUE_DATA:
+            name = league_data["name"]
+            self.league_combo.addItem(name, league_data)
         
     def update_league_urls(self):
         # 도메인이 바뀌면 현재 선택된 리그의 URL 로직이 바뀔 수 있음
-        # 하지만 여기서는 리그 콤보박스의 data 부분에 path만 저장하므로 
-        # 실제 URL 생성 시 도메인을 붙이면 됨.
-        self.on_league_changed(self.league_combo.currentIndex())
+        # 시즌이 선택되어 있다면 다시 로드
+        self.on_season_changed(self.season_combo.currentIndex())
 
     def on_league_changed(self, index):
-        path = self.league_combo.currentData()
+        self.season_combo.blockSignals(True)
+        self.season_combo.clear()
+        
+        league_data = self.league_combo.currentData()
+        if league_data and "seasons" in league_data:
+            for season_info in league_data["seasons"]:
+                season_name = season_info[0]
+                # season tuple: (시즌명, 리그URL, 팀목록URL)
+                # 팀 위젯에서는 팀 목록 URL(index 2)이 중요함
+                team_list_path = season_info[2]
+                self.season_combo.addItem(season_name, team_list_path)
+                
+        self.season_combo.blockSignals(False)
+        self.on_season_changed(self.season_combo.currentIndex())
+
+    def on_season_changed(self, index):
+        path = self.season_combo.currentData()
         self.team_combo.clear()
         self.btn_start.setEnabled(False)
         self.url_input.clear()
         
         if path:
-            self.log(f"리그 선택됨: {self.league_combo.currentText()}. 자동으로 팀 목록을 가져옵니다.")
+            self.log(f"시즌 선택됨: {self.season_combo.currentText()}. 자동으로 팀 목록을 가져옵니다.")
             self.fetch_teams() # 자동 실행
-        
+
     def fetch_teams(self):
-        path = self.league_combo.currentData()
+        path = self.season_combo.currentData()
         if not path:
             return
             

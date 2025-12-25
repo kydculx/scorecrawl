@@ -1,9 +1,37 @@
-# 리그 경로 정보 (도메인 제외)
-# (표시 이름, 리그 URL, 팀 목록 URL)
-LEAGUE_PATHS = [
-    ("리그 선택", "", ""),
-    ("K리그 1", "/subleague/15", "/subleastanding/2025/15/313"),
-    ("프리미어리그", "/league/36", "/leastanding/36"),
+# 리그 및 시즌 데이터 구조 정의
+# LEAGUE_DATA = [
+#     {
+#         "name": "리그명",
+#         "seasons": [
+#             ("시즌명", "리그URL", "팀목록URL"),
+#             ...
+#         ]
+#     },
+#     ...
+# ]
+
+LEAGUE_DATA = [
+    {
+        "name": "리그 선택",
+        "seasons": []
+    },
+    {
+        "name": "K리그 1",
+        "seasons": [
+            ("2025", "/subleague/15", "/subleastanding/2025/15/313"),
+             # 과거 시즌 예시: ("2024", "/subleague/15", "/subleastanding/2024/15/...")
+        ]
+    },
+    {
+        "name": "프리미어리그",
+        "seasons": [
+            ("2025-2026", "/league/36", "/leastanding/36"),
+            ("2024-2025", "/league/2024-2025/36", "/leastanding/2024-2025/36"),
+            ("2023-2024", "/league/2023-2024/36", "/leastanding/2023-2024/36"),
+            ("2022-2023", "/league/2022-2023/36", "/leastanding/2022-2023/36"),
+            ("2021-2022", "/league/2021-2022/36", "/leastanding/2021-2022/36"),
+        ]
+    },
 ]
 
 # 엑셀 저장을 위한 컬럼 정의 (팀)
