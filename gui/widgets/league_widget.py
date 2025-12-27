@@ -68,6 +68,8 @@ class LeagueCrawlWidget(QWidget):
         self.league_combo.blockSignals(True)
         self.league_combo.clear()
         
+        self.league_combo.addItem("리그를 선택하세요", {})
+        
         # LEAGUE_DATA 기반으로 리그 콤보박스 채우기
         # userData로 해당 리그의 전체 데이터를 저장
         for league_data in LEAGUE_DATA:
@@ -114,6 +116,9 @@ class LeagueCrawlWidget(QWidget):
 
     def start(self):
         url = self.url_input.text().strip()
+        league_name = self.league_combo.currentText()
+        season_name = self.season_combo.currentText()
+        
         if not url: return
         
         rounds = None
@@ -121,7 +126,7 @@ class LeagueCrawlWidget(QWidget):
             try: rounds = int(self.max_rounds.text())
             except: pass
             
-        self.thread = CrawlThread(url, rounds)
+        self.thread = CrawlThread(url, rounds, league_name, season_name)
         self.thread.log_signal.connect(self.log)
         self.thread.finished_signal.connect(self.finished)
         

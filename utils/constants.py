@@ -12,14 +12,13 @@
 
 LEAGUE_DATA = [
     {
-        "name": "리그 선택",
-        "seasons": []
-    },
-    {
         "name": "K리그 1",
         "seasons": [
             ("2025", "/subleague/15", "/subleastanding/2025/15/313"),
-             # 과거 시즌 예시: ("2024", "/subleague/15", "/subleastanding/2024/15/...")
+            ("2024", "/subleague/2024/15", "/subleastanding/2024/15/313"),
+            ("2023", "/subleague/2023/15", "/subleastanding/2023/15/313"),
+            ("2022", "/subleague/2022/15", "/subleastanding/2022/15/313"),
+            ("2021", "/subleague/2021/15", "/subleastanding/2021/15/313"),
         ]
     },
     {

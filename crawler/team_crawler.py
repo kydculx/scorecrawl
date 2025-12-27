@@ -60,7 +60,7 @@ class TeamCrawler:
             finally:
                 browser.close()
                 
-        return sorted(teams, key=lambda x: x['name'])
+        return teams
 
     def crawl_team_data(self, team_url, team_name):
         """팀 상세 페이지에서 통계 및 경기 결과 데이터 크롤링"""
