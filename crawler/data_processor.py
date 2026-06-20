@@ -60,7 +60,7 @@ class DataProcessor:
         except: return ""
 
     @classmethod
-    def save_results(cls, df, title, ordered_companies, log_callback=None):
+    def save_results(cls, df, title, ordered_companies, log_callback=None, league_name=None, season_name=None):
         if df.empty:
             if log_callback: log_callback("데이터가 없습니다.")
             return None
@@ -98,17 +98,14 @@ class DataProcessor:
 
         if log_callback: log_callback(f"[결과] 총 {len(pivot_df)}개의 경기 데이터 처리")
 
-        # 2. JSON 생성 및 저장
-        json_data = cls._create_json_data(pivot_df, index_cols)
-        with open(json_filename, 'w', encoding='utf-8') as f:
-            json.dump(json_data, f, ensure_ascii=False, indent=2)
-        if log_callback: log_callback(f"JSON 저장 완료: {json_filename}")
+        # 2. JSON 데이터 생성 (Excel 생성용)
+        json_data = cls._create_json_data(pivot_df, index_cols, league_name, season_name)
 
         # 3. Excel 생성
         # 실제 데이터에 존재하는 회사 목록 업데이트
         companies_in_data = set()
         for match in json_data:
-            for comp in match.get("배당", {}).keys():
+            for comp in match.get("Odds", {}).keys():
                 companies_in_data.add(comp)
         
         final_companies = [c for c in ordered_companies if c in companies_in_data]
@@ -116,10 +113,10 @@ class DataProcessor:
             if c not in final_companies:
                 final_companies.append(c)
 
-        # 평균을 맨 앞으로 이동
-        if "평균" in final_companies:
-            final_companies.remove("평균")
-            final_companies.insert(0, "평균")
+        # AVERAGE를 맨 앞으로 이동
+        if "AVERAGE" in final_companies:
+            final_companies.remove("AVERAGE")
+            final_companies.insert(0, "AVERAGE")
 
         cls._create_excel(json_data, filename, final_companies)
         if log_callback: log_callback(f"엑셀 저장 완료: {filename}")
@@ -333,10 +330,13 @@ class DataProcessor:
             return None
 
     @classmethod
-    def _create_json_data(cls, df, match_info_cols):
+    def _create_json_data(cls, df, match_info_cols, league_name=None, season_name=None):
         json_data = []
         for _, row in df.iterrows():
-            match_data = {}
+            match_data = {
+                "League": league_name,
+                "Season": season_name
+            }
             
             # 기본 정보
             if "Round" in df.columns: match_data["Round"] = cls.safe_get_value(row["Round"])
@@ -344,25 +344,30 @@ class DataProcessor:
             date_val = cls.safe_get_value(row["날짜"]) if "날짜" in df.columns else None
             time_val = cls.safe_get_value(row["시간"]) if "시간" in df.columns else None
             if date_val or time_val:
-                match_data["경기일시"] = {"날짜": date_val, "시간": time_val}
+                match_data["DateTime"] = {"Date": date_val, "Time": time_val}
 
             # 팀 정보
-            for side in ["홈", "원정"]:
+            for side, eng_side in [("홈", "Home"), ("원정", "Away")]:
                 team = cls.safe_get_value(row[side]) if side in df.columns else None
                 rank = cls.safe_get_value(row[f"{side}순위"]) if f"{side}순위" in df.columns else None
                 if team or rank:
-                    match_data[side] = {"팀": team, "순위": rank}
+                    match_data[eng_side] = {"Team": team, "Rank": rank}
 
             # 스코어
             score = cls.safe_get_value(row["스코어"]) if "스코어" in df.columns else "-"
             score = str(score).strip() if score else "-"
-            if ":" in score:
-                p = score.split(":")
-                match_data["스코어"] = f"{p[0].strip()}-{p[1].strip()}"
-            elif "-" not in score and score != "-":
-                 match_data["스코어"] = score
+            home_score, away_score = "-", "-"
+            
+            # 구분자 (:, -)를 기준으로 숫자 추출
+            import re
+            score_match = re.search(r'(\d+)\s*[:\-]\s*(\d+)', score)
+            if score_match:
+                home_score, away_score = score_match.group(1), score_match.group(2)
+                match_data["Score"] = f"{home_score}-{away_score}"
             else:
-                 match_data["스코어"] = score
+                 match_data["Score"] = score
+            match_data["HomeScore"] = home_score
+            match_data["AwayScore"] = away_score
 
             # 배당 정보
             odds_data = {}
@@ -398,21 +403,23 @@ class DataProcessor:
                                 loss_cnt += 1
 
                         if comp not in odds_data: odds_data[comp] = {}
-                        odds_data[comp][type_] = val
+                        eng_type = {"승": "W", "무": "D", "패": "L"}.get(type_, type_)
+                        odds_data[comp][eng_type] = val
             
             # 평균 배당 추가
+            # AVERAGE 배당 추가
             if win_cnt > 0 or draw_cnt > 0 or loss_cnt > 0:
                 avg_win = round(win_sum / win_cnt, 2) if win_cnt > 0 else None
                 avg_draw = round(draw_sum / draw_cnt, 2) if draw_cnt > 0 else None
                 avg_loss = round(loss_sum / loss_cnt, 2) if loss_cnt > 0 else None
                 
-                if "평균" not in odds_data: odds_data["평균"] = {}
-                odds_data["평균"] = {"승": avg_win, "무": avg_draw, "패": avg_loss}
+                if "AVERAGE" not in odds_data: odds_data["AVERAGE"] = {}
+                odds_data["AVERAGE"] = {"W": avg_win, "D": avg_draw, "L": avg_loss}
             
-            if odds_data: match_data["배당"] = odds_data
+            if odds_data: match_data["Odds"] = odds_data
             
             # 유효성 검사 (팀 정보 없음 제외)
-            if not match_data.get("홈", {}).get("팀") and not match_data.get("원정", {}).get("팀"):
+            if not match_data.get("Home", {}).get("Team") and not match_data.get("Away", {}).get("Team"):
                 continue
                 
             json_data.append(match_data)
@@ -431,83 +438,48 @@ class DataProcessor:
             align_center = Alignment(horizontal='center', vertical='center')
             font_bold = Font(bold=True)
             
-            # 헤더 구성
-            row1, row2 = [], []
+            # 헤더 구성 (단일 행)
+            header_row = ["LEAGUE", "SEASON", "ROUND", "DATE", "TIME", 
+                          "HOME_TEAM", "HOME_RANK", "HOME_SCORE", "AWAY_SCORE", 
+                          "AWAY_TEAM", "AWAY_RANK"]
             
-            # 고정 헤더
-            headers = [("Round", 1), ("경기일시", 2, ["날짜", "시간"]), 
-                       ("홈", 2, ["팀", "순위"]), ("스코어", 1), ("원정", 2, ["팀", "순위"])]
-            
-            for h in headers:
-                if len(h) == 2: # 단일 컬럼
-                    row1.append(h[0])
-                    row2.append("")
-                else: # 그룹 컬럼
-                    row1.append(h[0])
-                    row1.extend([""] * (h[1]-1))
-                    row2.extend(h[2])
-
-            # 배당 회사 헤더
             for comp in companies:
-                row1.append(comp)
-                row1.extend(["", ""])
-                row2.extend(["승", "무", "패"])
+                header_row.extend([f"{comp}_W", f"{comp}_D", f"{comp}_L"])
 
-            ws.append(row1)
-            ws.append(row2)
+            ws.append(header_row)
 
-            # 헤더 스타일 및 병합
-            for row in ws.iter_rows(min_row=1, max_row=2):
-                for cell in row:
-                    cell.alignment = align_center
-                    cell.font = font_bold
+            # 헤더 스타일
+            for cell in ws[1]:
+                cell.alignment = align_center
+                cell.font = font_bold
             
-            # 병합 로직
-            curr_col = 1
-            # Round
-            ws.merge_cells(start_row=1, start_column=curr_col, end_row=2, end_column=curr_col)
-            curr_col += 1
-            # 경기일시
-            ws.merge_cells(start_row=1, start_column=curr_col, end_row=1, end_column=curr_col+1)
-            curr_col += 2
-            # 홈
-            ws.merge_cells(start_row=1, start_column=curr_col, end_row=1, end_column=curr_col+1)
-            curr_col += 2
-            # 스코어
-            ws.merge_cells(start_row=1, start_column=curr_col, end_row=2, end_column=curr_col)
-            curr_col += 1
-            # 원정
-            ws.merge_cells(start_row=1, start_column=curr_col, end_row=1, end_column=curr_col+1)
-            curr_col += 2
-            
-            # 배당 회사들
-            for _ in companies:
-                ws.merge_cells(start_row=1, start_column=curr_col, end_row=1, end_column=curr_col+2)
-                curr_col += 3
+            # 병합 로직 제거 (한줄 헤더)
             
             # 데이터 채우기
             for match in json_data:
                 row = []
+                row.append(cls.safe_excel_value(match.get("League")))
+                row.append(cls.safe_excel_value(match.get("Season")))
                 row.append(cls.safe_excel_value(match.get("Round")))
                 
-                dt = match.get("경기일시", {})
-                row.extend([cls.safe_excel_value(dt.get("날짜")), cls.safe_excel_value(dt.get("시간"))])
+                dt = match.get("DateTime", {})
+                row.extend([cls.safe_excel_value(dt.get("Date")), cls.safe_excel_value(dt.get("Time"))])
                 
-                home = match.get("홈", {})
-                row.extend([cls.safe_excel_value(home.get("팀")), cls.safe_excel_value(home.get("순위"))])
+                home = match.get("Home", {})
+                row.extend([cls.safe_excel_value(home.get("Team")), cls.safe_excel_value(home.get("Rank"))])
                 
-                row.append(cls.safe_excel_value(match.get("스코어")))
+                row.extend([cls.safe_excel_value(match.get("HomeScore")), cls.safe_excel_value(match.get("AwayScore"))])
                 
-                away = match.get("원정", {})
-                row.extend([cls.safe_excel_value(away.get("팀")), cls.safe_excel_value(away.get("순위"))])
+                away = match.get("Away", {})
+                row.extend([cls.safe_excel_value(away.get("Team")), cls.safe_excel_value(away.get("Rank"))])
                 
-                odds = match.get("배당", {})
+                odds = match.get("Odds", {})
                 for comp in companies:
                     c_odds = odds.get(comp, {})
                     row.extend([
-                        cls.safe_excel_value(c_odds.get("승")),
-                        cls.safe_excel_value(c_odds.get("무")),
-                        cls.safe_excel_value(c_odds.get("패"))
+                        cls.safe_excel_value(c_odds.get("W")),
+                        cls.safe_excel_value(c_odds.get("D")),
+                        cls.safe_excel_value(c_odds.get("L"))
                     ])
                 ws.append(row)
 

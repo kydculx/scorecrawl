@@ -18,7 +18,7 @@ class CrawlThread(QThread):
     def run(self):
         try:
             self.crawler = ScoreCrawler(self.log_signal.emit)
-            df, title, companies = self.crawler.crawl(self.url, self.max_rounds)
+            df, title, companies = self.crawler.crawl(self.url, self.max_rounds, default_title=self.league_name or "Unknown")
             
             if not self.is_running:
                 self.finished_signal.emit(False, "중지됨")
@@ -30,7 +30,11 @@ class CrawlThread(QThread):
             else:
                 custom_title = title
 
-            filename = DataProcessor.save_results(df, custom_title, companies, self.log_signal.emit)
+            filename = DataProcessor.save_results(
+                df, custom_title, companies, self.log_signal.emit,
+                league_name=self.league_name, 
+                season_name=self.season_name
+            )
             if filename:
                 self.finished_signal.emit(True, filename)
             else:
