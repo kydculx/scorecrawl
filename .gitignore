@@ -49,9 +49,13 @@ restart*.log
 
 # Playwright
 .playwright/
+.playwright-mcp/
 
 # 기타
 *.bak
 *.tmp
 .cache/
+~$*.xlsx
+~$*
+scoreman-page.png
 

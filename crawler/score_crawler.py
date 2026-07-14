@@ -93,23 +93,7 @@ class ScoreCrawler:
                     self.log(f"테스트 모드: {max_rounds}개 라운드만 수집")
                     round_texts = round_texts[:max_rounds]
 
-                # 배당 회사 확인
-                self.companies = []
-                try:
-                    if page.locator("#oddsCompany option").first.count() > 0:
-                        company_options = page.locator("#oddsCompany option").all()
-                        for opt in company_options:
-                            val = opt.get_attribute("value")
-                            text = opt.inner_text().strip()
-                            if val: self.companies.append((val, text))
-                except:
-                    pass
-                
-                if not self.companies:
-                    self.log("배당 회사 드롭다운이 없습니다. 기본 화면의 승무패 값을 수집합니다.")
-                    self.companies = [("", "기본")]
-                else:
-                    self.log(f"수집 대상 회사: {[n for v, n in self.companies]}")
+                self.companies = [("", "기본")]
 
                 # 라운드별 순회
                 for round_num in round_texts:
@@ -120,42 +104,39 @@ class ScoreCrawler:
                             round_btn = page.locator(".round span").filter(has_text=re.compile(rf"^\s*{round_num}\s*$")).first
                         if round_btn.count() == 0:
                             round_btn = page.locator("#Table2 td").filter(has_text=re.compile(rf"^\s*{round_num}\s*$")).first
-                        
-                        round_btn.click()
-                        page.wait_for_timeout(1000)
+
+                        # 이미 현재 라운드인 경우에도 재클릭 (AJAX 재로딩 방지 위해 스킵)
+                        is_current = round_btn.get_attribute("class") and "on" in (round_btn.get_attribute("class") or "")
+                        if not is_current:
+                            round_btn.click()
+                            # 라운드 버튼이 활성화(on)될 때까지 대기
+                            try:
+                                page.wait_for_selector(f".round span[round='{round_num}'].on", timeout=5000)
+                            except:
+                                pass
+                            # AJAX 매치 데이터 로딩 대기
+                            page.wait_for_timeout(1500)
                         
                         # 해당 라운드의 순위 정보 수집
                         round_rankings = {}
                         try:
-                            # '전반' 탭 클릭하여 전반전 기준 순위표 활성화
-                            try:
-                                first_half_tab = page.locator("span").filter(has_text=re.compile(r"^전반$")).first
-                                if first_half_tab.count() > 0:
-                                    first_half_tab.click(force=True)
-                                    page.wait_for_timeout(300)
-                            except Exception as tab_err:
-                                self.log(f"'전반' 탭 클릭 실패: {tab_err}")
-                            
                             # standingBox 내의 해당 라운드 li 요소를 JS로 직접 클릭
                             standing_li_selector = f"#standingBox li[data-st-r='{round_num}']"
                             if page.locator(standing_li_selector).count() > 0:
-                                prev_text = page.locator("#standingBox").inner_text().strip().replace('\n', ' ')
                                 page.eval_on_selector(standing_li_selector, "el => el.click()")
                                 
                                 # 드롭다운 텍스트 업데이트 대기
                                 try:
                                     page.wait_for_function(
                                         f"document.querySelector('#standingBox').innerText.includes('라운드{round_num}')",
-                                        timeout=2000
+                                        timeout=3000
                                     )
                                 except:
                                     pass
                                 
-                                page.wait_for_timeout(1000)
-                                curr_text = page.locator("#standingBox").inner_text().strip().replace('\n', ' ')
-                                self.log(f"  [순위 드롭다운] {prev_text} -> {curr_text} 변경 완료")
+                                page.wait_for_timeout(500)
                             
-                            # 1. 새로운 List 구조 (#standingList li) 파싱 시도
+                            # #standingList li 구조 파싱
                             standing_rows = page.locator("#standingList li").all()
                             for row in standing_rows:
                                 try:
@@ -174,7 +155,7 @@ class ScoreCrawler:
                                 except:
                                     continue
                             
-                            # 2. 새로운 구조에서 수집되지 않은 경우 기존 Table 구조 파싱 시도 (Fallback)
+                            # Fallback: 테이블 구조 파싱
                             if not round_rankings:
                                 standing_rows = page.locator(".lei_table tr, #Table3 tr, #div_standing tr, #standingBox ~ table tr, #standingBox ~ div table tr").all()
                                 for row in standing_rows:
@@ -201,7 +182,9 @@ class ScoreCrawler:
                         if round_rankings:
                             sorted_rankings = sorted(round_rankings.items(), key=lambda x: int(x[1]) if x[1].isdigit() else 999)
                             rankings_str = ", ".join([f"{rank}위:{team}" for team, rank in sorted_rankings])
-                            self.log(f"라운드 {round_num} (전반전 기준) 순위 데이터 수집 완료:\n  -> {rankings_str}")
+                            self.log(f"라운드 {round_num} 순위 데이터 수집 완료:\n  -> {rankings_str}")
+                        else:
+                            self.log(f"  [주의] 라운드 {round_num} 순위 데이터를 찾을 수 없습니다.")
                         
                         for comp_val, comp_name in self.companies:
                             self._process_company_round(page, round_num, comp_val, comp_name, data_list, is_nowgoal, round_rankings)
@@ -214,7 +197,7 @@ class ScoreCrawler:
             finally:
                 browser.close()
 
-        return pd.DataFrame(data_list), league_title, [n for v, n in self.companies]
+        return pd.DataFrame(data_list), league_title, [n for _, n in self.companies]
 
     def _find_team_rank(self, team_name, rankings):
         if not rankings:
@@ -239,75 +222,133 @@ class ScoreCrawler:
                 
         return "-"
 
+    def _switch_odds_type(self, page, odds_type):
+        try:
+            selector = "span.odds.selectbox"
+            if page.locator(selector).count() == 0:
+                return False
+            page.locator(selector).click()
+            page.wait_for_timeout(200)
+            page.locator(f"ul.selectpop li[type='{odds_type}']").click()
+            page.wait_for_timeout(1000)
+            return True
+        except Exception:
+            return False
+
+    def _read_current_odds(self, page, count):
+        try:
+            page.wait_for_selector(".schedulis .odds span", timeout=3000)
+        except:
+            pass
+        elements = page.locator(".schedulis").all()
+        odds_list = []
+        for el in elements[:count]:
+            spans = el.locator(".odds span").all()
+            odds_list.append([
+                spans[i].inner_text().strip() if i < len(spans) else "-"
+                for i in range(3)
+            ])
+        return odds_list
+
     def _process_company_round(self, page, round_num, comp_val, comp_name, data_list, is_nowgoal=False, round_rankings=None):
         try:
             if comp_val and page.locator("#oddsCompany").count() > 0:
                 page.select_option("#oddsCompany", comp_val)
-                # 데이터 로딩 및 렌더링을 위해 대기 시간 증가
                 page.wait_for_timeout(500)
-            
-            # .schedulis 또는 tr 요소 대기
+
             try:
-                page.wait_for_selector(".schedulis, tr", timeout=2000)
+                page.wait_for_selector(".schedulis .odds span", timeout=5000)
             except:
                 pass
-            
+
             schedulis_elements = page.locator(".schedulis").all()
             self.log(f"{comp_name} - 발견된 매치(.schedulis) 개수: {len(schedulis_elements)}")
-            count = 0
-            
+
             if schedulis_elements:
+                # PASS 1: 승무패
+                temp_matches = []
                 for match_el in schedulis_elements:
                     try:
-                        # 날짜 & 시간 파싱 (예: "02.28 14:00")
                         date_text = match_el.locator(".date").inner_text().strip()
                         date_raw = date_text.split()
                         date_val = date_raw[0].replace('-', '.') if len(date_raw) > 0 else ""
                         time_val = date_raw[1] if len(date_raw) > 1 else ""
-                        
+
                         if is_nowgoal and '.' in date_val:
                             parts = date_val.split('.')
                             if len(parts) >= 2:
                                 date_val = f"{parts[1]}.{parts[0]}"
-                                
+
                         home_text = match_el.locator(".home").inner_text().strip()
                         away_text = match_el.locator(".away").inner_text().strip()
-                        
+
                         home_team, home_rank = DataProcessor.parse_team_rank(home_text)
                         away_team, away_rank = DataProcessor.parse_team_rank(away_text)
-                        
+
                         if round_rankings:
                             if home_rank == "-":
                                 home_rank = self._find_team_rank(home_team, round_rankings)
                             if away_rank == "-":
                                 away_rank = self._find_team_rank(away_team, round_rankings)
-                                
-                        score_val = match_el.locator(".score").inner_text().strip()
-                        
+
+                        score_text = match_el.locator(".score").inner_text().strip()
+                        score_parts = re.split(r'\s*-\s*', score_text)
+                        home_score = score_parts[0].strip() if len(score_parts) > 0 else "-"
+                        away_score = score_parts[1].strip() if len(score_parts) > 1 else "-"
+
                         odds_spans = match_el.locator(".odds span").all()
                         win_odds = odds_spans[0].inner_text().strip() if len(odds_spans) > 0 else "-"
                         draw_odds = odds_spans[1].inner_text().strip() if len(odds_spans) > 1 else "-"
                         lose_odds = odds_spans[2].inner_text().strip() if len(odds_spans) > 2 else "-"
-                        
-                        data_list.append({
+
+                        temp_matches.append({
                             "Round": round_num,
-                            "Company": comp_name,
                             "날짜": date_val,
                             "시간": time_val,
                             "홈": home_team,
                             "홈순위": home_rank,
-                            "스코어": score_val,
+                            "홈스코어": home_score,
                             "원정": away_team,
                             "원정순위": away_rank,
+                            "원정스코어": away_score,
                             "승": win_odds,
                             "무": draw_odds,
                             "패": lose_odds
                         })
-                        self.log(f"  [수집] {date_val} {time_val} - {home_team}({home_rank}) {score_val} {away_team}({away_rank}) | 배당: {win_odds}/{draw_odds}/{lose_odds}")
-                        count += 1
+                        self.log(f"  [수집] {date_val} {time_val} - {home_team}({home_rank}) {score_text} {away_team}({away_rank}) | 승무패: {win_odds}/{draw_odds}/{lose_odds}")
                     except Exception as ex:
                         self.log(f"  [에러] 매치 개별 파싱 실패: {ex}")
                         continue
+
+                # PASS 2: 언오버
+                if self._switch_odds_type(page, "T"):
+                    over_odds = self._read_current_odds(page, len(temp_matches))
+                    for i, odds in enumerate(over_odds):
+                        temp_matches[i]["오버"] = odds[0]
+                        temp_matches[i]["오버라인"] = odds[1]
+                        temp_matches[i]["언더"] = odds[2]
+                    self.log(f"  언오버 배당 수집 완료 ({len(over_odds)}개)")
+                else:
+                    for m in temp_matches:
+                        m.update({"오버": "-", "오버라인": "-", "언더": "-"})
+
+                # PASS 3: 핸디캡
+                if self._switch_odds_type(page, "L"):
+                    hdc_odds = self._read_current_odds(page, len(temp_matches))
+                    for i, odds in enumerate(hdc_odds):
+                        temp_matches[i]["핸디캡홈"] = odds[0]
+                        temp_matches[i]["핸디캡라인"] = odds[1]
+                        temp_matches[i]["핸디캡원정"] = odds[2]
+                    self.log(f"  핸디캡 배당 수집 완료 ({len(hdc_odds)}개)")
+                else:
+                    for m in temp_matches:
+                        m.update({"핸디캡홈": "-", "핸디캡라인": "-", "핸디캡원정": "-"})
+
+                self._switch_odds_type(page, "O")
+
+                data_list.extend(temp_matches)
+                self.log(f"  승무패/언오버/핸디캡 통합 완료 ({len(temp_matches)}개)")
+
             else:
                 rows = page.locator("tr").all()
                 self.log(f"{comp_name} - 발견된 tr 개수: {len(rows)}")
@@ -315,49 +356,52 @@ class ScoreCrawler:
                     try:
                         cells = row.locator("td").all()
                         if len(cells) < 5: continue
-                        
-                        # 데이터 파싱
+
                         date_raw = cells[1].inner_text().strip().split('\n')
                         date_val = date_raw[0].strip().replace('-', '.')
-                        
-                        # nowgoal.com 인 경우 날짜 형식 변경 (일.월 -> 월.일)
+
                         if is_nowgoal and '.' in date_val:
                             parts = date_val.split('.')
                             if len(parts) >= 2:
-                                # 25.01 -> 01.25 처럼 순서 변경
-                                # parts[0]: 일, parts[1]: 월
                                 date_val = f"{parts[1]}.{parts[0]}"
-                                
+
                         home_text = cells[2].inner_text().strip()
                         away_text = cells[4].inner_text().strip()
-                        
+
                         home_team, home_rank = DataProcessor.parse_team_rank(home_text)
                         away_team, away_rank = DataProcessor.parse_team_rank(away_text)
-                        
+
                         if round_rankings:
                             if home_rank == "-":
                                 home_rank = self._find_team_rank(home_team, round_rankings)
                             if away_rank == "-":
                                 away_rank = self._find_team_rank(away_team, round_rankings)
-                                
-                        if home_team.isdigit(): continue # 헤더 행 스킵
-                        
+
+                        if home_team.isdigit(): continue
+
+                        score_text = cells[3].inner_text().strip()
+                        score_parts = re.split(r'\s*-\s*', score_text)
+                        home_score = score_parts[0].strip() if len(score_parts) > 0 else "-"
+                        away_score = score_parts[1].strip() if len(score_parts) > 1 else "-"
+
                         data_list.append({
                             "Round": round_num,
-                            "Company": comp_name,
                             "날짜": date_val,
                             "시간": date_raw[1].strip() if len(date_raw) > 1 else '',
                             "홈": home_team,
                             "홈순위": home_rank,
-                            "스코어": cells[3].inner_text().strip(),
+                            "홈스코어": home_score,
                             "원정": away_team,
                             "원정순위": away_rank,
+                            "원정스코어": away_score,
                             "승": cells[5].inner_text().strip() if len(cells) > 5 else "-",
                             "무": cells[6].inner_text().strip() if len(cells) > 6 else "-",
-                            "패": cells[7].inner_text().strip() if len(cells) > 7 else "-"
+                            "패": cells[7].inner_text().strip() if len(cells) > 7 else "-",
+                            "오버": "-", "오버라인": "-", "언더": "-",
+                            "핸디캡홈": "-", "핸디캡라인": "-", "핸디캡원정": "-",
                         })
-                        count += 1
-                    except: continue
+                    except:
+                        continue
         except Exception as e:
             self.log(f"{comp_name} 처리 중 에러: {e}")
 
