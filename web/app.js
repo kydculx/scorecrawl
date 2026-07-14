@@ -18,6 +18,17 @@ const LEAGUE_TABLES = {
   "세리에 A": "serie_a"
 };
 
+// League URLs matching utils/constants.py
+const LEAGUE_URLS = {
+  "K리그 1": "/league/15",
+  "K리그 2": "/league/1292",
+  "프리미어리그": "/league/36",
+  "분데스리가": "/league/8",
+  "라리가": "/league/31",
+  "J1리그": "/league/25",
+  "세리에 A": "/league/34"
+};
+
 // Global State
 let supabaseClient = null;
 let fetchedData = [];
@@ -54,8 +65,77 @@ const statusBadge = document.getElementById('status-badge');
 const statusTime = document.getElementById('status-time');
 const statusLogLink = document.getElementById('status-log-link');
 
+// Extract ID from league URL
+function extractLeagueId(url) {
+  const match = url.match(/\/league\/(?:[^\/]*\/)?(\d+)/);
+  if (match) return match[1];
+  const lastMatch = url.match(/\/(\d+)$/);
+  return lastMatch ? lastMatch[1] : '';
+}
+
+// Fetch Season List Dynamically from API
+async function updateSeasonList() {
+  const league = selectLeague.value;
+  const leagueUrl = LEAGUE_URLS[league];
+  
+  if (!leagueUrl) return;
+  
+  const leagueId = extractLeagueId(leagueUrl);
+  if (!leagueId) return;
+
+  const originalValue = selectSeason.value; // Store currently selected season if any
+  selectSeason.innerHTML = '<option value="">시즌 목록 로드 중...</option>';
+  selectSeason.disabled = true;
+
+  const apiUrl = `https://football.scoreman123.com/jsData/leagueSeason/sea${leagueId}.json`;
+  const proxyUrl = `https://corsproxy.io/?` + encodeURIComponent(apiUrl);
+
+  try {
+    const response = await fetch(proxyUrl);
+    if (!response.ok) throw new Error('Network response was not ok');
+    
+    const data = await response.json();
+    const seasons = data.SeasonList || [];
+
+    if (seasons.length === 0) throw new Error('No seasons found');
+
+    selectSeason.innerHTML = '';
+    seasons.forEach((sName, idx) => {
+      const option = document.createElement('option');
+      option.value = sName;
+      option.textContent = sName;
+      // Default select the latest season (first in API response)
+      if (idx === 0 && !originalValue) {
+        option.selected = true;
+      } else if (originalValue && sName === originalValue) {
+        option.selected = true;
+      }
+      selectSeason.appendChild(option);
+    });
+  } catch (err) {
+    console.warn('CORS API season fetch failed. Falling back to static values:', err);
+    // Fallback: Static season list
+    selectSeason.innerHTML = '';
+    const isSingleYear = ["K리그 1", "K리그 2", "J1리그"].includes(league);
+    const years = [2026, 2025, 2024, 2023, 2022, 2021, 2020, 2019, 2018, 2017];
+    
+    years.forEach(yr => {
+      const option = document.createElement('option');
+      const val = isSingleYear ? `${yr}` : `${yr}-${yr+1}`;
+      option.value = val;
+      option.textContent = val;
+      if (val === originalValue) {
+        option.selected = true;
+      }
+      selectSeason.appendChild(option);
+    });
+  } finally {
+    selectSeason.disabled = false;
+  }
+}
+
 // Initialization
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   // Initialize Lucide Icons
   lucide.createIcons();
   
@@ -65,7 +145,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // Setup Supabase Client if configured
   initSupabase();
   
+  // Load dynamic season list for the first time
+  await updateSeasonList();
+  
   // Setup Event Listeners
+  selectLeague.addEventListener('change', updateSeasonList);
   btnFetch.addEventListener('click', fetchData);
   btnExcel.addEventListener('click', exportToExcel);
   btnTrigger.addEventListener('click', triggerWorkflow);
