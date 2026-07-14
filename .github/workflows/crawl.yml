@@ -1,0 +1,55 @@
+name: Run ScoreCrawler
+
+on:
+  workflow_dispatch:
+    inputs:
+      league_name:
+        description: '리그명 (K리그 1, K리그 2, 프리미어리그, 분데스리가, 라리가, J1리그, 세리에 A)'
+        required: true
+        default: '프리미어리그'
+      season_name:
+        description: '시즌명 (예: 2025-2026, latest)'
+        required: true
+        default: 'latest'
+      max_rounds:
+        description: '최대 수집 라운드 수 (테스트용, 비워두면 전체 수집)'
+        required: false
+        default: ''
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Install Playwright Chromium
+      run: |
+        python -m playwright install chromium --with-deps
+
+    - name: Run Crawler
+      env:
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      run: |
+        LEAGUE="${{ github.event.inputs.league_name }}"
+        SEASON="${{ github.event.inputs.season_name }}"
+        ROUNDS="${{ github.event.inputs.max_rounds }}"
+        
+        if [ -n "$ROUNDS" ]; then
+          python run_crawler.py --league "$LEAGUE" --season "$SEASON" --max-rounds "$ROUNDS"
+        else
+          python run_crawler.py --league "$LEAGUE" --season "$SEASON"
+        fi
