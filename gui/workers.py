@@ -1,25 +1,41 @@
 from PyQt5.QtCore import QThread, pyqtSignal
 from crawler.score_crawler import ScoreCrawler
 from crawler.data_processor import DataProcessor
+from utils.supabase_helper import get_max_round
 
 
 class CrawlThread(QThread):
     log_signal = pyqtSignal(str)
     finished_signal = pyqtSignal(bool, str)
     
-    def __init__(self, url, max_rounds=None, league_name=None, season_name=None):
+    def __init__(self, url, max_rounds=None, league_name=None, season_name=None, resume_mode=False):
         super().__init__()
         self.url = url
         self.max_rounds = max_rounds
         self.league_name = league_name
         self.season_name = season_name
+        self.resume_mode = resume_mode
         self.crawler = None
         self.is_running = True
     
     def run(self):
         try:
             self.crawler = ScoreCrawler(self.log_signal.emit)
-            df, title, _ = self.crawler.crawl(self.url, self.max_rounds, default_title=self.league_name or "Unknown")
+
+            start_round = None
+            if self.resume_mode and self.league_name and self.season_name:
+                max_r = get_max_round(self.league_name, self.season_name)
+                if max_r is not None:
+                    start_round = max_r
+                    self.log_signal.emit(f"[이어서] DB에 {max_r}라운드까지 저장됨 → {max_r + 1}라운드부터 시작")
+                else:
+                    self.log_signal.emit(f"[이어서] DB에 저장된 데이터 없음 → 처음부터 크롤링")
+
+            df, title, _ = self.crawler.crawl(
+                self.url, self.max_rounds,
+                start_round=start_round,
+                default_title=self.league_name or "Unknown"
+            )
             
             if not self.is_running:
                 self.finished_signal.emit(False, "중지됨")
@@ -54,12 +70,13 @@ class AllSeasonCrawlThread(QThread):
     finished_signal = pyqtSignal(bool, str)
     progress_signal = pyqtSignal(int, int)
 
-    def __init__(self, seasons, domain, league_name, max_rounds=None):
+    def __init__(self, seasons, domain, league_name, max_rounds=None, resume_mode=False):
         super().__init__()
         self.seasons = seasons
         self.domain = domain
         self.league_name = league_name
         self.max_rounds = max_rounds
+        self.resume_mode = resume_mode
         self.is_running = True
 
     def run(self):
@@ -79,7 +96,21 @@ class AllSeasonCrawlThread(QThread):
 
             try:
                 crawler = ScoreCrawler(self.log_signal.emit)
-                df, title, _ = crawler.crawl(url, self.max_rounds, default_title=self.league_name or "Unknown")
+
+                start_round = None
+                if self.resume_mode and self.league_name and season_name:
+                    max_r = get_max_round(self.league_name, season_name)
+                    if max_r is not None:
+                        start_round = max_r
+                        self.log_signal.emit(f"  [이어서] DB에 {max_r}라운드까지 저장됨 → {max_r + 1}라운드부터 시작")
+                    else:
+                        self.log_signal.emit(f"  [이어서] DB 저장 데이터 없음 → 처음부터")
+
+                df, title, _ = crawler.crawl(
+                    url, self.max_rounds,
+                    start_round=start_round,
+                    default_title=self.league_name or "Unknown"
+                )
 
                 if not self.is_running:
                     break

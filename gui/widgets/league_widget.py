@@ -47,6 +47,9 @@ class LeagueCrawlWidget(QWidget):
         self.check_all = QCheckBox("전체")
         self.check_all.stateChanged.connect(self.on_all_check_changed)
 
+        self.check_resume = QCheckBox("이어서")
+        self.check_resume.setToolTip("DB에 저장된 마지막 라운드부터 이어서 크롤링")
+
         top_layout.addWidget(QLabel("도메인:"))
         top_layout.addWidget(self.domain_combo)
         top_layout.addWidget(QLabel("리그:"))
@@ -54,6 +57,7 @@ class LeagueCrawlWidget(QWidget):
         top_layout.addWidget(QLabel("시즌:"))
         top_layout.addWidget(self.season_combo)
         top_layout.addWidget(self.check_all)
+        top_layout.addWidget(self.check_resume)
         layout.addLayout(top_layout)
 
         url_layout = QHBoxLayout()
@@ -148,8 +152,10 @@ class LeagueCrawlWidget(QWidget):
         sb.setValue(sb.maximum())
 
     def start(self):
+        resume_mode = self.check_resume.isChecked()
+
         if self.check_all.isChecked():
-            self.start_all_seasons()
+            self.start_all_seasons(resume_mode)
             return
 
         url = self.url_input.text().strip()
@@ -166,7 +172,7 @@ class LeagueCrawlWidget(QWidget):
             except:
                 pass
 
-        self.thread = CrawlThread(url, rounds, league_name, season_name)
+        self.thread = CrawlThread(url, rounds, league_name, season_name, resume_mode=resume_mode)
         self.thread.log_signal.connect(self.log)
         self.thread.finished_signal.connect(self.finished)
 
@@ -175,7 +181,7 @@ class LeagueCrawlWidget(QWidget):
         self.log_view.clear()
         self.thread.start()
 
-    def start_all_seasons(self):
+    def start_all_seasons(self, resume_mode=False):
         league_name = self.league_combo.currentText()
         domain = self.domain_combo.currentText()
 
@@ -196,7 +202,7 @@ class LeagueCrawlWidget(QWidget):
             except:
                 pass
 
-        self.thread = AllSeasonCrawlThread(seasons, domain, league_name, rounds)
+        self.thread = AllSeasonCrawlThread(seasons, domain, league_name, rounds, resume_mode=resume_mode)
         self.thread.log_signal.connect(self.log)
         self.thread.finished_signal.connect(self.finished)
 
