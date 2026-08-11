@@ -14,7 +14,7 @@ class ScoreCrawler:
         else:
             print(msg)
 
-    def crawl(self, url, max_rounds=None, default_title="Unknown"):
+    def crawl(self, url, max_rounds=None, start_round=None, default_title="Unknown"):
         data_list = []
         league_title = default_title
         
@@ -88,6 +88,13 @@ class ScoreCrawler:
 
                 round_texts = sorted(list(set(round_texts)), key=int)
                 round_texts = [r for r in round_texts if int(r) <= current_round]
+                
+                if start_round:
+                    round_texts = [r for r in round_texts if int(r) >= start_round]
+                    if round_texts:
+                        self.log(f"  → {start_round}라운드부터 재개 (시작: {round_texts[0]}라운드)")
+                    else:
+                        self.log(f"  → {start_round}라운드 이상 데이터 없음 (최대: {current_round}라운드)")
                 
                 if max_rounds:
                     self.log(f"테스트 모드: {max_rounds}개 라운드만 수집")
