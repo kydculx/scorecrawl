@@ -103,8 +103,13 @@ class ScoreCrawler:
                 self.companies = [("", "기본")]
 
                 # 라운드별 순회
-                for round_num in round_texts:
-                    self.log(f"\n[{round_num} 라운드] 수집 시작")
+                total_rounds = len(round_texts)
+                for idx, round_num in enumerate(round_texts):
+                    pct = (idx + 1) / total_rounds * 100
+                    bar_len = 10
+                    filled = round(pct / 100 * bar_len)
+                    bar = "█" * filled + "░" * (bar_len - filled)
+                    self.log(f"\n[{round_num} 라운드] 수집 시작 ({idx + 1}/{total_rounds}) [{bar}] {pct:.0f}%")
                     try:
                         round_btn = page.locator(f".round span[round='{round_num}']").first
                         if round_btn.count() == 0:
