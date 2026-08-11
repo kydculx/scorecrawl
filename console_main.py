@@ -143,10 +143,16 @@ def main():
             break
         next_time = datetime.fromtimestamp(time.time() + interval * 60).strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{now_str()}] 다음 실행 예정: {next_time} (매 {interval}분)")
-        for _ in range(interval * 60):
+
+        # 재시작 대기: 1분 단위로 남은 시간 표시 (파일 로그 리다이렉트 호환)
+        total_secs = interval * 60
+        for remaining in range(total_secs, 0, -1):
             if _stop:
                 break
             time.sleep(1)
+            if remaining % 60 == 0:
+                print(f"[{now_str()}] 재시작까지 {remaining // 60}분 남음")
+        print(f"[{now_str()}] 재시작")
 
     print(f"[{now_str()}] 종료됨")
 
